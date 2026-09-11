@@ -6,7 +6,6 @@ import sqlite3
 
 BASE_URL = "https://books.toscrape.com/"
 
-# Website open
 response = requests.get(BASE_URL)
 response.encoding = "utf-8"
 
@@ -76,17 +75,11 @@ df["price_gbp"] = (
     .str.replace("£", "", regex=False)
     .astype(float)
 )
-# df["price_gbp"] = (
-#     df["price"]
-#     .astype(str)
-#     .str.replace(r"[^0-9.]", "", regex=True)
-# )
 
 df["price_gbp"] = pd.to_numeric(
     df["price_gbp"],
     errors="coerce"
 )
-
 
 # Convert rating words to numbers
 rating_map = {
@@ -185,10 +178,7 @@ conn.commit()
 print("\nDatabase created: zepto_books.db")
 print("Books inserted:", len(df))
 
-
-# ===========================================================
 # STEP 5: Run at least 5 SQL queries (incl. one JOIN)
-# ===========================================================
 
 query_1 = """
 SELECT title, price_gbp, rating
@@ -249,10 +239,7 @@ print(result_4_join)
 print("\n--- Query 5: avg price per category (JOIN + GROUP BY) ---")
 print(result_5)
 
-
-# ===========================================================
 # STEP 6: Verify pd.read_sql (SQL JOIN) vs pd.merge (pandas only)
-# ===========================================================
 
 books_table = pd.read_sql("SELECT * FROM books;", conn)
 categories_table = pd.read_sql("SELECT * FROM categories;", conn)
