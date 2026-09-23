@@ -8,7 +8,6 @@ BASE_URL = "https://books.toscrape.com/"
 
 response = requests.get(BASE_URL)
 response.encoding = "utf-8"
-
 print("Status:", response.status_code)
 
 # HTML read
@@ -34,31 +33,38 @@ for category in selected_categories:
     print(category["name"], category["url"])
 
 
-# Scrape books from each category
+# Scrape books from each category (FIX: follow pagination with "li.next a"
+# so every book in each category is captured, not just the first page)
 all_books = []
 
 for category in selected_categories:
 
     print("\nScraping:", category["name"])
 
-    response = requests.get(category["url"])
-    response.encoding = "utf-8"
-    soup = BeautifulSoup(response.text, "html.parser")
+    next_url = category["url"]
 
-    for book in soup.select("article.product_pod"):
+    while next_url:
+        response = requests.get(next_url)
+        response.encoding = "utf-8"
+        soup = BeautifulSoup(response.text, "html.parser")
 
-        title = book.h3.a.get("title")
-        price = book.select_one(".price_color").get_text(strip=True)
-        rating = book.select_one("p.star-rating")["class"][1]
-        availability = book.select_one(".availability").get_text(" ", strip=True)
+        for book in soup.select("article.product_pod"):
 
-        all_books.append({
-            "title": title,
-            "price": price,
-            "star_rating": rating,
-            "availability": availability,
-            "category": category["name"]
-        })
+            title = book.h3.a.get("title")
+            price = book.select_one(".price_color").get_text(strip=True)
+            rating = book.select_one("p.star-rating")["class"][1]
+            availability = book.select_one(".availability").get_text(" ", strip=True)
+
+            all_books.append({
+                "title": title,
+                "price": price,
+                "star_rating": rating,
+                "availability": availability,
+                "category": category["name"]
+            })
+
+        next_link = soup.select_one("li.next a")
+        next_url = urljoin(next_url, next_link.get("href")) if next_link else None
 
 
 print("\nTotal books:", len(all_books))
@@ -69,17 +75,18 @@ print(df.head())
 print(df.shape)
 
 # Clean price
-
-df["price_gbp"] = (
-    df["price"]
-    .str.replace("£", "", regex=False)
-    .astype(float)
-)
+# FIX: strip the currency symbol and convert with pd.to_numeric(errors="coerce")
+# BEFORE calling .astype(float), so an unexpected/unparseable price becomes
+# NaN instead of crashing the whole pipeline. Then median-impute any NaNs.
 
 df["price_gbp"] = pd.to_numeric(
-    df["price_gbp"],
+    df["price"].str.replace("£", "", regex=False),
     errors="coerce"
 )
+
+if df["price_gbp"].isna().any():
+    median_price_gbp = df["price_gbp"].median()
+    df["price_gbp"] = df["price_gbp"].fillna(median_price_gbp)
 
 # Convert rating words to numbers
 rating_map = {
@@ -201,12 +208,14 @@ WHERE price_gbp BETWEEN 20 AND 40
 ORDER BY price_gbp ASC;
 """
 
+# FIX: added "b.title ASC" as a tiebreaker so SQLite's ordering is fully
+# deterministic and matches the pandas sort exactly when compared later.
 query_4_join = """
 SELECT b.title, b.rating, b.price_gbp, c.category_name
 FROM books b
 JOIN categories c ON b.category_id = c.category_id
 WHERE b.rating IN (4, 5)
-ORDER BY c.category_name, b.rating DESC
+ORDER BY c.category_name, b.rating DESC, b.title ASC
 LIMIT 15;
 """
 
@@ -246,8 +255,10 @@ categories_table = pd.read_sql("SELECT * FROM categories;", conn)
 
 merged_df = books_table.merge(categories_table, on="category_id", how="inner")
 merged_df = merged_df[merged_df["rating"].isin([4, 5])]
+# FIX: sort by the same three columns (category_name, rating, title) as the
+# SQL query above, so the tiebreaker matches and .equals() is reliable.
 merged_df = merged_df.sort_values(
-    ["category_name", "rating"], ascending=[True, False]
+    ["category_name", "rating", "title"], ascending=[True, False, True]
 ).head(15)[["title", "rating", "price_gbp", "category_name"]]
 
 sql_result_sorted = result_4_join.reset_index(drop=True)
